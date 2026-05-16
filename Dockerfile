@@ -11,9 +11,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 
+RUN groupadd -r scanner && useradd -r -g scanner scanner && \
+    mkdir -p /data && chown scanner:scanner /data
+
 ENV PYTHONPATH=/app/src
 
-VOLUME /data
 EXPOSE 5000
+
+USER scanner
 
 CMD ["python", "src/cli.py", "--web", "--db-path", "/data/iot_scanner.db"]

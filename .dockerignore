@@ -1,10 +1,11 @@
 venv/
 .git/
-__pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
 .superpowers/
 docs/
 tests/
+test_phase*.py
 *.md
 nul
