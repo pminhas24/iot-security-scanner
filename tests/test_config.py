@@ -14,6 +14,7 @@ def test_load_returns_defaults_when_no_file(tmp_path, monkeypatch):
     assert result["subnet"] == ""
     assert result["scan_depth"] == "full"
     assert result["dry_run"] is False
+    assert result["custom_ports"] == ""
 
 
 def test_save_and_load_roundtrip(tmp_path, monkeypatch):
@@ -44,3 +45,12 @@ def test_load_handles_corrupt_file(tmp_path, monkeypatch):
     import importlib; importlib.reload(config)
     result = config.load()
     assert result["subnet"] == ""
+
+
+def test_save_creates_parent_directories(tmp_path, monkeypatch):
+    nested_path = tmp_path / "a" / "b" / "config.json"
+    monkeypatch.setenv("CONFIG_PATH", str(nested_path))
+    from api import config
+    import importlib; importlib.reload(config)
+    config.save({"subnet": "192.168.1.0/24"})
+    assert nested_path.exists()
