@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  scanner:
+    build: .
+    volumes:
+      - scanner_data:/data
+    environment:
+      - CONFIG_PATH=/data/config.json
+    network_mode: host   # Required on Linux for Nmap to see local network
+    # On Windows/Mac: comment out network_mode and uncomment the two lines below
+    # ports:
+    #   - "5000:5000"
+
+volumes:
+  scanner_data:
