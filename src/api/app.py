@@ -275,7 +275,11 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
         """POST /api/settings - Persist scan settings."""
         from api import config
         data = request.get_json(silent=True) or {}
-        config.save(data)
+        try:
+            config.save(data)
+        except Exception as e:
+            logger.error(f"Failed to save settings: {e}")
+            return jsonify({"error": str(e)}), 500
         return jsonify({"status": "saved"})
 
     @app.route("/api/network/detect")
@@ -293,17 +297,20 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
         """GET /api/scan/stream - SSE stream of scan progress."""
         def _generate():
             last_progress = None
+            scan_started = False
             while True:
-                status = app.config["SCAN_STATUS"]
+                status = dict(app.config["SCAN_STATUS"])
                 progress = status["progress"]
                 running = status["running"]
 
+                if running:
+                    scan_started = True
+
                 if progress != last_progress:
-                    import json as _json
-                    yield f"data: {_json.dumps({'progress': progress, 'running': running})}\n\n"
+                    yield f"data: {json.dumps({'progress': progress, 'running': running})}\n\n"
                     last_progress = progress
 
-                if not running and last_progress is not None:
+                if scan_started and not running and last_progress is not None:
                     yield "event: scan_complete\ndata: {\"done\": true}\n\n"
                     return
 

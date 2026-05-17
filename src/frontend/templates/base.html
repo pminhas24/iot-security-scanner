@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}IoT Scanner{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = { darkMode: 'class' }</script>
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-3 flex flex-wrap items-center gap-4">
+    <a href="/" class="font-bold text-lg text-white tracking-tight">IoT Scanner</a>
+
+    <div class="flex gap-5 text-sm ml-2">
+      <span class="text-red-400">🔴 Critical: <strong id="count-critical">{{ risk_summary.critical if risk_summary else 0 }}</strong></span>
+      <span class="text-orange-400">🟠 High: <strong id="count-high">{{ risk_summary.high if risk_summary else 0 }}</strong></span>
+      <span class="text-yellow-400">🟡 Med: <strong id="count-medium">{{ risk_summary.medium if risk_summary else 0 }}</strong></span>
+      <span class="text-green-400">🟢 Low: <strong id="count-low">{{ risk_summary.low if risk_summary else 0 }}</strong></span>
+    </div>
+
+    <div class="ml-auto flex gap-2">
+      <button id="scan-btn"
+              onclick="startScan()"
+              class="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-1.5 rounded text-sm font-medium transition-colors">
+        Scan My Network
+      </button>
+      <button onclick="toggleSettings()"
+              class="bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded text-sm transition-colors">
+        ⚙ Settings
+      </button>
+    </div>
+  </header>
+
+  <!-- Settings panel (hidden by default) -->
+  <div id="settings-panel" class="hidden bg-gray-900 border-b border-gray-800 px-6 py-4">
+    <form onsubmit="saveSettings(event)" class="flex flex-wrap gap-4 items-end">
+      <div>
+        <label class="block text-xs text-gray-400 mb-1 uppercase tracking-wide">Subnet</label>
+        <input id="setting-subnet" type="text" placeholder="192.168.1.0/24"
+               class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm w-48 focus:outline-none focus:border-blue-500">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1 uppercase tracking-wide">Scan Depth</label>
+        <select id="setting-depth"
+                class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500">
+          <option value="full">Full (ports + fingerprint + vulns)</option>
+          <option value="quick">Quick (discovery + ports only)</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1 uppercase tracking-wide">Custom Ports</label>
+        <input id="setting-ports" type="text" placeholder="22,80,443,8080"
+               class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-sm w-44 focus:outline-none focus:border-blue-500">
+      </div>
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input id="setting-dryrun" type="checkbox" class="rounded accent-blue-500">
+        <span class="text-sm text-gray-300">Dry Run</span>
+      </label>
+      <button type="submit"
+              class="bg-green-700 hover:bg-green-600 px-4 py-1.5 rounded text-sm transition-colors">
+        Save Settings
+      </button>
+    </form>
+  </div>
+
+  <!-- Scan progress bar (hidden when idle) -->
+  <div id="progress-container" class="hidden bg-gray-800 border-b border-gray-700 px-6 py-2">
+    <div class="flex items-center gap-3">
+      <div class="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full flex-shrink-0"></div>
+      <span id="progress-text" class="text-sm text-gray-300">Scanning...</span>
+    </div>
+  </div>
+
+  <!-- Flash error (optional) -->
+  {% if error %}
+  <div class="bg-red-900 border border-red-700 text-red-200 px-6 py-3 text-sm">
+    ⚠ {{ error }}
+  </div>
+  {% endif %}
+
+  <main class="px-6 py-6">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

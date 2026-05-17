@@ -44,13 +44,47 @@ def test_scan_stream_returns_event_stream(client):
     assert "text/event-stream" in r.content_type
 
 
-def test_scan_stream_yields_complete_event(client):
+def test_scan_stream_yields_complete_event():
+    import threading
+    import time
     from api.app import create_app
-    import os
     app = create_app({"db_type": "sqlite", "db_path": ":memory:"})
     app.config["TESTING"] = True
-    app.config["SCAN_STATUS"] = {"running": False, "progress": "Done", "last_scan_id": 1}
+    app.config["SCAN_STATUS"]["running"] = True
+    app.config["SCAN_STATUS"]["progress"] = "Scanning..."
+
+    def finish():
+        time.sleep(0.2)
+        app.config["SCAN_STATUS"]["running"] = False
+        app.config["SCAN_STATUS"]["progress"] = "Done"
+
+    t = threading.Thread(target=finish, daemon=True)
+    t.start()
+
     with app.test_client() as c:
         r = c.get("/api/scan/stream")
         body = b"".join(r.response)
         assert b"scan_complete" in body
+
+    t.join(timeout=3)
+
+
+def test_network_detect_returns_subnet_or_empty(client):
+    r = client.get("/api/network/detect")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert "subnet" in data
+    assert isinstance(data["subnet"], str)
+
+
+def test_network_detect_returns_empty_on_failure(client):
+    import sys
+    from unittest.mock import MagicMock, patch
+    mock_nd_module = MagicMock()
+    mock_nd_module.NetworkDiscovery.return_value.get_network_range.side_effect = RuntimeError("iface not found")
+    with patch.dict(sys.modules, {"scanner": MagicMock(), "scanner.network_discovery": mock_nd_module}):
+        r = client.get("/api/network/detect")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["subnet"] == ""
+    assert "error" in data

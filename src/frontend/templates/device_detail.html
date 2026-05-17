@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}{{ device.ip_address }} — IoT Scanner{% endblock %}
+
+{% block content %}
+{% set risk = device.risk_level | default('low') | lower %}
+{% set badge = {
+    'critical': 'bg-red-600 text-white',
+    'high':     'bg-orange-500 text-white',
+    'medium':   'bg-yellow-500 text-black',
+    'low':      'bg-green-700 text-white',
+}.get(risk, 'bg-gray-600 text-white') %}
+
+<div class="mb-4">
+  <a href="/" class="text-sm text-gray-500 hover:text-gray-300 transition-colors">← Back to Dashboard</a>
+</div>
+
+<!-- Device summary card -->
+<div class="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-6">
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <h1 class="text-2xl font-bold font-mono text-white mb-1">{{ device.ip_address }}</h1>
+      <p class="text-gray-400">{{ device.hostname or 'No hostname' }}</p>
+    </div>
+    <div class="text-right">
+      <div class="text-4xl font-bold text-white mb-1">{{ device.risk_score | default(0) }}<span class="text-lg text-gray-500">/100</span></div>
+      <span class="px-3 py-1 rounded text-sm font-semibold uppercase {{ badge }}">{{ risk }}</span>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 text-sm">
+    <div>
+      <div class="text-xs text-gray-500 uppercase mb-1">Type</div>
+      <div class="text-white capitalize">{{ device.device_type or 'Unknown' }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-gray-500 uppercase mb-1">Vendor</div>
+      <div class="text-white">{{ device.vendor or '—' }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-gray-500 uppercase mb-1">MAC Address</div>
+      <div class="text-white font-mono">{{ device.mac_address or '—' }}</div>
+    </div>
+    <div>
+      <div class="text-xs text-gray-500 uppercase mb-1">Model</div>
+      <div class="text-white">{{ device.model or '—' }}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Open ports -->
+{% if device.ports %}
+<div class="bg-gray-900 border border-gray-800 rounded-lg p-6 mb-6">
+  <h2 class="text-sm text-gray-400 uppercase tracking-wide mb-4">Open Ports</h2>
+  <table class="w-full text-sm">
+    <thead class="text-xs text-gray-500 uppercase">
+      <tr>
+        <th class="text-left pb-2">Port</th>
+        <th class="text-left pb-2">Service</th>
+        <th class="text-left pb-2">Product / Version</th>
+        <th class="text-left pb-2">Risk</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-800">
+      {% for port in device.ports %}
+      {% set sev = port.severity | default('') | upper %}
+      {% set sev_color = {
+          'CRITICAL': 'text-red-400',
+          'HIGH':     'text-orange-400',
+          'MEDIUM':   'text-yellow-400',
+          'LOW':      'text-green-400',
+      }.get(sev, 'text-gray-500') %}
+      <tr>
+        <td class="py-2 font-mono text-white">{{ port.port }}/tcp</td>
+        <td class="py-2 text-gray-300">{{ port.service or '—' }}</td>
+        <td class="py-2 text-gray-400">{{ ((port.product or '') + ' ' + (port.version or '')) | trim or '—' }}</td>
+        <td class="py-2 {{ sev_color }} text-xs font-semibold">{{ sev or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- Vulnerabilities -->
+{% if device.vulnerabilities %}
+<div class="bg-gray-900 border border-gray-800 rounded-lg p-6">
+  <h2 class="text-sm text-gray-400 uppercase tracking-wide mb-4">Vulnerabilities</h2>
+  <div class="flex flex-col gap-3">
+    {% for vuln in device.vulnerabilities %}
+    {% set sev = vuln.severity | default('') | upper %}
+    {% set border = {
+        'CRITICAL': 'border-red-600',
+        'HIGH':     'border-orange-500',
+        'MEDIUM':   'border-yellow-500',
+        'LOW':      'border-green-600',
+    }.get(sev, 'border-gray-600') %}
+    {% set badge_class = {
+        'CRITICAL': 'bg-red-600 text-white',
+        'HIGH':     'bg-orange-500 text-white',
+        'MEDIUM':   'bg-yellow-500 text-black',
+        'LOW':      'bg-green-700 text-white',
+    }.get(sev, 'bg-gray-600 text-white') %}
+    <div class="border-l-4 {{ border }} pl-4 py-2">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="px-2 py-0.5 rounded text-xs font-bold {{ badge_class }}">{{ sev }}</span>
+        <span class="text-white text-sm font-medium">{{ vuln.vuln_type or vuln.type or '—' }}</span>
+      </div>
+      <p class="text-gray-400 text-sm">{{ vuln.description or vuln.details or '—' }}</p>
+      {% if vuln.remediation %}
+      <p class="text-green-400 text-xs mt-1">Fix: {{ vuln.remediation }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="bg-gray-900 border border-gray-800 rounded-lg p-6 text-center text-gray-500 text-sm">
+  No vulnerabilities detected.
+</div>
+{% endif %}
+
+{% endblock %}
