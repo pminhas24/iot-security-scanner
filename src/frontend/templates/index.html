@@ -71,7 +71,7 @@
     <div class="flex flex-col gap-1">
       {% for scan in scan_history %}
       <div class="text-xs text-gray-500 font-mono">
-        {{ scan.scan_date }} — {{ scan.scan_type }} — {{ scan.network_range }} — {{ scan.device_count }} devices
+        {{ scan.scan_timestamp }} — {{ scan.scan_type }} — {{ scan.network_range }} — {{ scan.devices_found }} devices
       </div>
       {% endfor %}
     </div>
