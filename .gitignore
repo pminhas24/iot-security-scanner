@@ -1,46 +1,44 @@
-@"
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
+*.pyo
 .Python
 venv/
+.venv/
 env/
-ENV/
-.venv
+*.egg-info/
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
 
-# Environment variables
+# Logs & scan output
+*.log
+results.json
+scan.log
+
+# Environment
 .env
 .env.local
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
 
 # OS
 .DS_Store
 Thumbs.db
+nul
 
-# Node
-node_modules/
-dist/
-build/
-
-# Logs
-*.log
-
-# Coverage
-.coverage
-htmlcov/
+# IDE
+.vscode/
+.idea/
 
 # Docker
 docker-compose.override.yml
-"@ | Out-File -FilePath .gitignore -Encoding UTF8
+
+# AI tooling (don't expose workflow)
+.superpowers/
+docs/superpowers/
