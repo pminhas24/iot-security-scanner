@@ -8,7 +8,6 @@ SQLite (default, zero-config) and PostgreSQL backends.
 import logging
 import os
 import sqlite3
-from datetime import datetime, timezone
 from typing import Optional
 
 from scanner.models import DeviceScanResult

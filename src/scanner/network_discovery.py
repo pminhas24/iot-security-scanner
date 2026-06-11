@@ -492,11 +492,11 @@ if __name__ == "__main__":
             devices = [device]
         elif args.quick:
             # Quick scan with ports
-            print(f"\nPerforming quick scan...")
+            print("\nPerforming quick scan...")
             devices = scanner.quick_scan(args.range)
         else:
             # Host discovery only
-            print(f"\nDiscovering hosts...")
+            print("\nDiscovering hosts...")
             devices = scanner.discover_hosts(args.range)
 
         # Display results
@@ -508,7 +508,7 @@ if __name__ == "__main__":
             print(f"  Vendor: {device.vendor or 'N/A'}")
             print(f"  State: {device.state}")
             if device.open_ports:
-                print(f"  Open Ports:")
+                print("  Open Ports:")
                 for port in device.open_ports:
                     print(f"    - {port['port']}/{port['service']} "
                           f"({port['product']} {port['version']})")

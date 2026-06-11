@@ -188,10 +188,10 @@ def main() -> None:
             print(f"\n[*] Scanning target device: {args.target}")
             devices = [nd.scan_device(args.target)]
         elif args.quick:
-            print(f"\n[*] Running quick scan...")
+            print("\n[*] Running quick scan...")
             devices = nd.quick_scan(args.range)
         else:
-            print(f"\n[*] Discovering hosts on network...")
+            print("\n[*] Discovering hosts on network...")
             devices = nd.discover_hosts(args.range)
 
         print(f"[+] Found {len(devices)} device(s)")

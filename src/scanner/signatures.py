@@ -211,7 +211,7 @@ PORT_DEVICE_HINTS: dict[int, tuple[DeviceType, float]] = {
     1883: (DeviceType.SMART_HOME_HUB, 0.5),  # MQTT
     8883: (DeviceType.SMART_HOME_HUB, 0.5),  # MQTT/TLS
     5683: (DeviceType.SMART_HOME_HUB, 0.5),  # CoAP
-    49152: (DeviceType.SMART_HOME_HUB, 0.4), # UPnP
+    49152: (DeviceType.SMART_HOME_HUB, 0.4),  # UPnP
     8008: (DeviceType.MEDIA_PLAYER, 0.5),     # Chromecast
     8009: (DeviceType.MEDIA_PLAYER, 0.5),     # Chromecast
     8443: (DeviceType.ROUTER, 0.4),           # HTTPS admin

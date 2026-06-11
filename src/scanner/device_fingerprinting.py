@@ -74,7 +74,7 @@ class DeviceFingerprinter:
             DeviceFingerprint with classification and extracted info.
         """
         logger.debug(f"Fingerprinting {device.ip_address} "
-                      f"(vendor={device.vendor}, hostname={device.hostname})")
+                     f"(vendor={device.vendor}, hostname={device.hostname})")
 
         best_type = DeviceType.UNKNOWN
         best_confidence = 0.0
@@ -88,7 +88,7 @@ class DeviceFingerprinter:
             if result and result[1] > best_confidence:
                 best_type, best_confidence = result
                 logger.debug(f"  Hostname match: {best_type.value} "
-                              f"(confidence={best_confidence})")
+                             f"(confidence={best_confidence})")
 
         # --- Strategy 2: Vendor signature lookup ---
         if device.vendor:
@@ -96,7 +96,7 @@ class DeviceFingerprinter:
             if result and result[1] > best_confidence:
                 best_type, best_confidence = result
                 logger.debug(f"  Vendor match: {best_type.value} "
-                              f"(confidence={best_confidence})")
+                             f"(confidence={best_confidence})")
 
         # --- Strategy 3: HTTP header probing ---
         if port_scan:
@@ -117,7 +117,7 @@ class DeviceFingerprinter:
                             best_type = dt
                             best_confidence = conf
                             logger.debug(f"  HTTP match: {best_type.value} "
-                                          f"(confidence={best_confidence})")
+                                         f"(confidence={best_confidence})")
                     if http_info.get("model"):
                         model = http_info["model"]
                     if http_info.get("firmware"):
@@ -164,7 +164,7 @@ class DeviceFingerprinter:
             if result and result[1] > best_confidence:
                 best_type, best_confidence = result
                 logger.debug(f"  Port profile match: {best_type.value} "
-                              f"(confidence={best_confidence})")
+                             f"(confidence={best_confidence})")
 
         # Use vendor as manufacturer fallback
         if not manufacturer and device.vendor:
