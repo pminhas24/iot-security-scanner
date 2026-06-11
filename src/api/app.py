@@ -165,6 +165,9 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
             network_range: optional CIDR range
             scan_type: "discovery" | "quick" | "full"
 
+        custom_ports and dry_run are read from the saved settings
+        (api.config) at scan start.
+
         Returns immediately; scan runs in background thread.
         """
         if app.config["SCAN_STATUS"]["running"]:
@@ -173,6 +176,21 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
         data = request.get_json(silent=True) or {}
         network_range = data.get("network_range")
         scan_type = data.get("scan_type", "full")
+
+        from api import config as settings_config
+        saved = settings_config.load()
+        custom_ports = None
+        raw_ports = str(saved.get("custom_ports") or "").strip()
+        if raw_ports:
+            try:
+                custom_ports = [
+                    int(p.strip()) for p in raw_ports.split(",") if p.strip()
+                ]
+            except ValueError:
+                logger.warning(
+                    f"Ignoring invalid custom_ports setting: {raw_ports!r}"
+                )
+        dry_run = bool(saved.get("dry_run", False))
 
         def run_scan():
             app.config["SCAN_STATUS"]["running"] = True
@@ -201,14 +219,16 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
                 if scan_type in ("quick", "full"):
                     ps = PortScanner(scanner=nd.scanner)
                     fp_engine = DeviceFingerprinter()
-                    vc = VulnerabilityChecker()
+                    vc = VulnerabilityChecker(dry_run=dry_run)
 
                     for i, device in enumerate(devices, 1):
                         app.config["SCAN_STATUS"]["progress"] = (
                             f"Scanning device {i}/{total}: {device.ip_address}"
                         )
                         try:
-                            port_result = ps.scan_device(device.ip_address)
+                            port_result = ps.scan_device(
+                                device.ip_address, ports=custom_ports
+                            )
                             fingerprint = fp_engine.fingerprint(device, port_result)
                             vuln_report = vc.check(device, port_result, fingerprint)
                             results.append(DeviceScanResult(
