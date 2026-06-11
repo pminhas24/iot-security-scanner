@@ -403,8 +403,7 @@ IoT-Scanner/
 
 ---
 
+
 ## License
 
-<!-- No LICENSE file was found in the repository. Add one (e.g., MIT, Apache 2.0) before publishing. -->
-
-This project is not yet licensed. All rights reserved until a license is added.
+MIT License — see [LICENSE](LICENSE) for details.

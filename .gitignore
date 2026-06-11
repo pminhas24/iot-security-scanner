@@ -42,3 +42,5 @@ docker-compose.override.yml
 # AI tooling (don't expose workflow)
 .superpowers/
 docs/superpowers/
+
+CLAUDE.md
