@@ -19,7 +19,7 @@ IoT Security Scanner performs end-to-end security assessment of network-connecte
 - **Device Fingerprinting** — Five-layer classification (hostname patterns, MAC vendor, HTTP headers, UPnP/SSDP, port profiles) covering 13 device types and 120+ vendor signatures
 - **Vulnerability Detection** — Default credential testing (SSH, Telnet, HTTP Basic Auth) with rate limiting and dry-run safety mode
 - **Risk Scoring** — 0–100 composite score per device with CRITICAL / HIGH / MEDIUM / LOW levels
-- **Database Persistence** — SQLite (zero-config) or PostgreSQL backend with full scan history
+- **Database Persistence** — SQLite (zero-config) backend with full scan history
 - **Web Dashboard** — Flask-powered real-time dashboard with REST API, risk charts, and device drill-down
 - **Safe Scanning** — Attempt limits, 2-second inter-request delays, lockout thresholds, and `--dry-run` preview mode
 
@@ -27,19 +27,13 @@ IoT Security Scanner performs end-to-end security assessment of network-connecte
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Language | Python 3.x |
-| Network Scanning | `python-nmap` 7.0.1, `scapy` 2.7.0 |
-| SSH Auth Testing | `paramiko` 4.0.0 |
-| HTTP Probing | `requests` 2.32.5, `beautifulsoup4` 4.14.3 |
-| Web Framework | `Flask` 3.1.2, `Werkzeug` 3.1.5 |
-| Database | `sqlite3` (built-in), `psycopg2-binary` 2.9.11 |
-| CLI | `Click` 8.3.1 |
-| Cryptography | `cryptography` 46.0.5, `bcrypt` 5.0.0 |
-| Terminal UX | `colorama` 0.4.6 |
-| Task Runner | `invoke` 2.2.1 |
-
+| Network Scanning | `python-nmap` 0.7.1 |
+| SSH Auth Testing | `paramiko` |
+| HTTP Probing | `requests` |
+| Web Framework | `Flask`, `Werkzeug` |
+| Database | `sqlite3` (built-in) |
+| CLI | `argparse` (stdlib) |
+| Terminal UX | `colorama` |
 ---
 
 ## How It Works
@@ -93,6 +87,8 @@ Scores are capped at 100. The final score maps to a risk level:
 | 0 – 29 | Low |
 
 **Context-aware severity:** Severity is not applied uniformly. If a port is expected for the identified device type (e.g., port 554/RTSP on a camera, port 22/SSH on a router), the severity is downgraded — preventing false inflation of risk scores for properly configured devices. Unexpected dangerous ports on the same device type receive full severity weight.
+
+> **Note:** Any device with at least one CRITICAL finding is floored at HIGH risk, regardless of total score.
 
 ---
 
@@ -198,8 +194,6 @@ cd IoT-Scanner
 pip install -r requirements.txt
 ```
 
-For PostgreSQL support, ensure a running PostgreSQL server and create a database named `iot_scanner`.
-
 ---
 
 ## Usage
@@ -241,9 +235,6 @@ python cli.py -r 192.168.1.0/24 -p --fingerprint -o results.json
 # Save to SQLite database
 python cli.py -r 192.168.1.0/24 -p --fingerprint --vuln-check --save-db
 
-# Save to PostgreSQL
-python cli.py -r 192.168.1.0/24 -p --vuln-check --save-db \
-  --db-type postgresql --db-host localhost --db-name iot_scanner
 ```
 
 ### Web Dashboard
@@ -346,9 +337,6 @@ Router, Camera, Printer, Smart Speaker, Smart Display, Smart Home Hub, Smart App
 
 ```
 IoT-Scanner/
-├── cli.py                            # Unified CLI entry point (Click-based)
-├── requirements.txt
-├── results.json                      # Example scan output
 ├── src/
 │   ├── scanner/
 │   │   ├── network_discovery.py      # Phase 1: Nmap ping scan, host enumeration
@@ -358,16 +346,19 @@ IoT-Scanner/
 │   │   ├── models.py                 # Dataclasses: DiscoveredDevice, VulnerabilityReport, etc.
 │   │   └── signatures.py             # Vendor/hostname signature database (120+ entries)
 │   ├── database/
-│   │   ├── db_manager.py             # Phase 5: SQLite/PostgreSQL CRUD + query methods
-│   │   └── schema.sql                # PostgreSQL DDL with indexes
+│   │   └── db_manager.py             # Phase 5: SQLite CRUD + query methods
 │   └── api/
-│       ├── app.py                    # Phase 6: Flask routes (HTML + REST API)
-│       └── frontend/
-│           ├── templates/            # Jinja2 templates (dashboard, device detail)
-│           └── static/               # CSS + JavaScript (dashboard.js)
-├── scripts/
-│   └── view_results.sql              # SQL queries for manual analysis
-└── test_phase*.py                    # Smoke tests for each pipeline phase (2–6)
+│       └── app.py                    # Phase 6: Flask routes (HTML + REST API)
+├── static/
+│   └── app.js                        # HTMX + Tailwind frontend
+├── templates/
+│   └── base.html                     # Jinja2 base template
+├── tests/                            # pytest test suite
+├── dev_run.py                        # Seeds demo data, starts dev server
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+└── CLAUDE.md
 ```
 
 ---
