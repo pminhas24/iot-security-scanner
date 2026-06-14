@@ -42,7 +42,11 @@ class DatabaseManager:
         network_range   TEXT NOT NULL,
         scan_type       TEXT NOT NULL,
         devices_found   INTEGER DEFAULT 0,
-        duration_sec    REAL DEFAULT 0
+        duration_sec    REAL DEFAULT 0,
+        status          TEXT DEFAULT 'completed',
+        progress        TEXT DEFAULT '',
+        started_at      TEXT DEFAULT (datetime('now')),
+        finished_at     TEXT
     );
 
     CREATE TABLE IF NOT EXISTS devices (
@@ -241,11 +245,7 @@ class DatabaseManager:
                 scan_id = cursor.fetchone()[0]
 
             # Insert each device and its related data
-            for result in results:
-                device_id = self._insert_device(cursor, scan_id, result)
-                if device_id:
-                    self._insert_ports(cursor, device_id, result)
-                    self._insert_vulnerabilities(cursor, device_id, result)
+            self._insert_results(cursor, scan_id, results)
 
             self._conn.commit()
             logger.info(
@@ -258,6 +258,268 @@ class DatabaseManager:
             if self._conn:
                 self._conn.rollback()
             raise DatabaseError(f"Failed to save scan: {e}")
+
+    def _insert_results(
+        self, cursor, scan_id: int, results: list[DeviceScanResult]
+    ) -> None:
+        """Insert devices, ports, and vulnerabilities for a scan_id.
+
+        Shared by save_scan (legacy one-shot path) and complete_scan
+        (live web flow, where the scan row already exists).
+        """
+        for result in results:
+            device_id = self._insert_device(cursor, scan_id, result)
+            if device_id:
+                self._insert_ports(cursor, device_id, result)
+                self._insert_vulnerabilities(cursor, device_id, result)
+
+    # -------------------------------------------------------------------
+    # Scan state lifecycle (DB-backed; survives across Gunicorn workers)
+    # -------------------------------------------------------------------
+
+    def create_scan(
+        self,
+        network_range: str,
+        scan_type: str,
+        progress: str = "Starting scan...",
+    ) -> int:
+        """
+        Create a new scan row marked as running.
+
+        Used by the web flow at scan start so that "is a scan running?"
+        and live progress can be read by any worker from the database.
+
+        Args:
+            network_range: Target network range (may be a placeholder like
+                "auto-detect" that complete_scan later overwrites).
+            scan_type: Scan type ('discovery', 'quick', 'full', 'targeted').
+            progress: Initial progress message.
+
+        Returns:
+            scan_id of the created scan record.
+        """
+        if self._conn is None:
+            raise DatabaseError("Not connected to database")
+
+        try:
+            cursor = self._conn.cursor()
+            if self.db_type == "sqlite":
+                cursor.execute(
+                    """INSERT INTO scans (network_range, scan_type, status,
+                       progress, started_at)
+                       VALUES (?, ?, 'running', ?, datetime('now'))""",
+                    (network_range, scan_type, progress),
+                )
+                scan_id = cursor.lastrowid
+            else:
+                cursor.execute(
+                    """INSERT INTO scans (network_range, scan_type, status,
+                       progress, started_at)
+                       VALUES (%s, %s, 'running', %s, NOW())
+                       RETURNING scan_id""",
+                    (network_range, scan_type, progress),
+                )
+                scan_id = cursor.fetchone()[0]
+            self._conn.commit()
+            logger.info(f"Created running scan {scan_id} ({network_range})")
+            return scan_id
+        except Exception as e:
+            if self._conn:
+                self._conn.rollback()
+            raise DatabaseError(f"Failed to create scan: {e}")
+
+    def update_scan_progress(self, scan_id: int, progress: str) -> None:
+        """Update the progress message of a running scan."""
+        if self._conn is None:
+            raise DatabaseError("Not connected to database")
+
+        placeholder = "?" if self.db_type == "sqlite" else "%s"
+        try:
+            cursor = self._conn.cursor()
+            cursor.execute(
+                f"UPDATE scans SET progress = {placeholder} "
+                f"WHERE scan_id = {placeholder}",
+                (progress, scan_id),
+            )
+            self._conn.commit()
+        except Exception as e:
+            if self._conn:
+                self._conn.rollback()
+            raise DatabaseError(f"Failed to update scan progress: {e}")
+
+    def complete_scan(
+        self,
+        scan_id: int,
+        results: list[DeviceScanResult],
+        duration_sec: float = 0,
+        network_range: Optional[str] = None,
+    ) -> None:
+        """
+        Finalize a running scan: persist devices and mark it completed.
+
+        Inserts devices/ports/vulnerabilities under the existing scan_id
+        (no new scan row) and updates the row's status, counts, and timing.
+
+        Args:
+            scan_id: The running scan's id (from create_scan).
+            results: Device scan results to persist.
+            duration_sec: Total scan duration.
+            network_range: If given, overwrites the stored range (the web
+                flow stores a placeholder at create time and fills the real
+                auto-detected subnet here).
+        """
+        if self._conn is None:
+            raise DatabaseError("Not connected to database")
+
+        progress = f"Complete: {len(results)} devices scanned"
+        try:
+            cursor = self._conn.cursor()
+            self._insert_results(cursor, scan_id, results)
+
+            if self.db_type == "sqlite":
+                cursor.execute(
+                    """UPDATE scans
+                       SET status = 'completed', devices_found = ?,
+                           duration_sec = ?, progress = ?,
+                           finished_at = datetime('now'),
+                           network_range = COALESCE(?, network_range)
+                       WHERE scan_id = ?""",
+                    (len(results), duration_sec, progress,
+                     network_range, scan_id),
+                )
+            else:
+                cursor.execute(
+                    """UPDATE scans
+                       SET status = 'completed', devices_found = %s,
+                           duration_sec = %s, progress = %s,
+                           finished_at = NOW(),
+                           network_range = COALESCE(%s, network_range)
+                       WHERE scan_id = %s""",
+                    (len(results), duration_sec, progress,
+                     network_range, scan_id),
+                )
+            self._conn.commit()
+            logger.info(
+                f"Completed scan {scan_id}: {len(results)} devices, "
+                f"{duration_sec:.1f}s"
+            )
+        except Exception as e:
+            if self._conn:
+                self._conn.rollback()
+            raise DatabaseError(f"Failed to complete scan: {e}")
+
+    def fail_scan(self, scan_id: int, error_msg: str) -> None:
+        """Mark a running scan as failed with an error message."""
+        if self._conn is None:
+            raise DatabaseError("Not connected to database")
+
+        progress = f"Error: {error_msg}"
+        placeholder = "?" if self.db_type == "sqlite" else "%s"
+        now = "datetime('now')" if self.db_type == "sqlite" else "NOW()"
+        try:
+            cursor = self._conn.cursor()
+            cursor.execute(
+                f"""UPDATE scans
+                    SET status = 'failed', progress = {placeholder},
+                        finished_at = {now}
+                    WHERE scan_id = {placeholder}""",
+                (progress, scan_id),
+            )
+            self._conn.commit()
+            logger.warning(f"Scan {scan_id} failed: {error_msg}")
+        except Exception as e:
+            if self._conn:
+                self._conn.rollback()
+            raise DatabaseError(f"Failed to mark scan failed: {e}")
+
+    def get_active_scan(self) -> Optional[dict]:
+        """
+        Return the most recent running scan, or None.
+
+        Used by the scan-start endpoint to reject concurrent scans.
+        """
+        if self._conn is None:
+            raise DatabaseError("Not connected to database")
+
+        try:
+            cursor = self._conn.cursor()
+            cursor.execute(
+                "SELECT * FROM scans WHERE status = 'running' "
+                "ORDER BY scan_id DESC LIMIT 1"
+            )
+            row = cursor.fetchone()
+        except Exception:
+            # Table may not exist yet on a brand-new database.
+            return None
+        if not row:
+            return None
+        return dict(row) if self.db_type == "sqlite" \
+            else self._pg_row_to_dict(row, cursor)
+
+    def get_scan_state(self, scan_id: Optional[int] = None) -> dict:
+        """
+        Return the live scan state for the status endpoint and SSE stream.
+
+        Defaults to the most recent scan. Defensive: returns an idle state
+        if the scans table does not exist yet (fresh database), so status
+        reads never 500.
+
+        Returns a dict with keys: running, status, progress, scan_id,
+        network_range, started_at, finished_at, last_scan_id.
+        """
+        idle = {
+            "running": False,
+            "status": "idle",
+            "progress": "",
+            "scan_id": None,
+            "network_range": None,
+            "started_at": None,
+            "finished_at": None,
+            "last_scan_id": None,
+        }
+        if self._conn is None:
+            raise DatabaseError("Not connected to database")
+
+        placeholder = "?" if self.db_type == "sqlite" else "%s"
+        try:
+            cursor = self._conn.cursor()
+            if scan_id is None:
+                cursor.execute(
+                    "SELECT * FROM scans ORDER BY scan_id DESC LIMIT 1"
+                )
+            else:
+                cursor.execute(
+                    f"SELECT * FROM scans WHERE scan_id = {placeholder}",
+                    (scan_id,),
+                )
+            row = cursor.fetchone()
+
+            if not row:
+                return idle
+
+            scan = dict(row) if self.db_type == "sqlite" \
+                else self._pg_row_to_dict(row, cursor)
+
+            # Most recent successfully completed scan (for the dashboard).
+            cursor.execute(
+                "SELECT MAX(scan_id) FROM scans WHERE status = 'completed'"
+            )
+            last_row = cursor.fetchone()
+            last_scan_id = last_row[0] if last_row else None
+        except Exception as e:
+            logger.debug(f"get_scan_state falling back to idle: {e}")
+            return idle
+
+        return {
+            "running": scan["status"] == "running",
+            "status": scan["status"],
+            "progress": scan["progress"] or "",
+            "scan_id": scan["scan_id"],
+            "network_range": scan["network_range"],
+            "started_at": scan["started_at"],
+            "finished_at": scan["finished_at"],
+            "last_scan_id": last_scan_id,
+        }
 
     def _insert_device(
         self, cursor, scan_id: int, result: DeviceScanResult

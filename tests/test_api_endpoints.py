@@ -1,8 +1,19 @@
 import os
 import sys
+import types
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+_SRC = os.path.join(os.path.dirname(__file__), '..', 'src')
+sys.path.insert(0, _SRC)
+
+# Lightweight 'scanner' package stub so importing database.db_manager (which
+# imports scanner.models) doesn't pull in the whole scanner runtime
+# (paramiko/scapy). app.py imports scanner submodules lazily, and the mocked
+# scan tests override them via patch.dict regardless.
+if 'scanner' not in sys.modules:
+    _pkg = types.ModuleType('scanner')
+    _pkg.__path__ = [os.path.join(_SRC, 'scanner')]
+    sys.modules['scanner'] = _pkg
 
 
 @pytest.fixture
@@ -44,19 +55,39 @@ def test_scan_stream_returns_event_stream(client):
     assert "text/event-stream" in r.content_type
 
 
-def test_scan_stream_yields_complete_event():
+def test_scan_status_idle_on_fresh_db(client):
+    r = client.get("/api/scan/status")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["running"] is False
+    assert data["status"] == "idle"
+
+
+def test_scan_stream_yields_complete_event(tmp_path):
     import threading
     import time
     from api.app import create_app
-    app = create_app({"db_type": "sqlite", "db_path": ":memory:"})
+    from database.db_manager import DatabaseManager
+
+    # A real file DB (not :memory:) so the stream's connection and the
+    # "scan worker" connection share state, mirroring multi-worker deploys.
+    db_path = str(tmp_path / "stream.db")
+    app = create_app({"db_type": "sqlite", "db_path": db_path})
     app.config["TESTING"] = True
-    app.config["SCAN_STATUS"]["running"] = True
-    app.config["SCAN_STATUS"]["progress"] = "Scanning..."
+
+    seed = DatabaseManager(db_type="sqlite", db_path=db_path)
+    seed.connect()
+    seed.initialize_schema()
+    scan_id = seed.create_scan("192.168.1.0/24", "full")
+    seed.update_scan_progress(scan_id, "Scanning...")
+    seed.disconnect()
 
     def finish():
         time.sleep(0.2)
-        app.config["SCAN_STATUS"]["running"] = False
-        app.config["SCAN_STATUS"]["progress"] = "Done"
+        d = DatabaseManager(db_type="sqlite", db_path=db_path)
+        d.connect()
+        d.complete_scan(scan_id, [], duration_sec=0.1)
+        d.disconnect()
 
     t = threading.Thread(target=finish, daemon=True)
     t.start()
@@ -127,6 +158,12 @@ def _mock_scan_modules(captured):
 
     vc_module.VulnerabilityChecker.side_effect = record_vuln_checker
 
+    # Mocked DB: no scan currently running, create_scan hands back an id.
+    db_module = MagicMock()
+    db_instance = db_module.DatabaseManager.return_value
+    db_instance.get_active_scan.return_value = None
+    db_instance.create_scan.return_value = 123
+
     return {
         "scanner": MagicMock(),
         "scanner.network_discovery": nd_module,
@@ -135,21 +172,24 @@ def _mock_scan_modules(captured):
         "scanner.vulnerability_checker": vc_module,
         "scanner.models": MagicMock(),
         "database": MagicMock(),
-        "database.db_manager": MagicMock(),
+        "database.db_manager": db_module,
     }
 
 
 def _start_scan_and_wait(client, captured, key):
-    """POST /api/scan/start and wait for the background thread to finish."""
+    """POST /api/scan/start and wait for the background thread to do its work.
+
+    Scan state now lives in the DB (mocked here), so we wait on the captured
+    side effect rather than an in-memory status flag.
+    """
     import time
 
     r = client.post("/api/scan/start", json={"scan_type": "full"})
     assert r.status_code == 200
 
-    status = client.application.config["SCAN_STATUS"]
     deadline = time.time() + 5
     while time.time() < deadline:
-        if key in captured and not status["running"]:
+        if key in captured:
             break
         time.sleep(0.05)
 

@@ -7,7 +7,11 @@ CREATE TABLE IF NOT EXISTS scans (
     network_range   VARCHAR(50) NOT NULL,
     scan_type       VARCHAR(30) NOT NULL,
     devices_found   INTEGER DEFAULT 0,
-    duration_sec    REAL DEFAULT 0
+    duration_sec    REAL DEFAULT 0,
+    status          VARCHAR(20) DEFAULT 'completed',
+    progress        TEXT DEFAULT '',
+    started_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    finished_at     TIMESTAMP WITH TIME ZONE
 );
 
 CREATE TABLE IF NOT EXISTS devices (

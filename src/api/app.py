@@ -43,17 +43,15 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
         static_folder=os.path.join(src_dir, "frontend", "static"),
     )
 
+    # Default DB config is env-driven so the Gunicorn app factory
+    # (api.app:create_app()) can be configured without code changes.
     app.config["DB_CONFIG"] = db_config or {
-        "db_type": "sqlite",
-        "db_path": "iot_scanner.db",
+        "db_type": os.environ.get("SCANNER_DB_TYPE", "sqlite"),
+        "db_path": os.environ.get("SCANNER_DB_PATH", "iot_scanner.db"),
     }
 
-    # Track running scans
-    app.config["SCAN_STATUS"] = {
-        "running": False,
-        "progress": "",
-        "last_scan_id": None,
-    }
+    # Scan state (running / progress / completed) lives in the database, not
+    # in process memory, so it is shared across Gunicorn workers.
 
     def get_db():
         """Get a DatabaseManager instance."""
@@ -154,7 +152,13 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
     @app.route("/api/scan/status")
     def api_scan_status():
         """GET /api/scan/status - Check if a scan is running."""
-        return jsonify(app.config["SCAN_STATUS"])
+        try:
+            db = get_db()
+            state = db.get_scan_state()
+            db.disconnect()
+            return jsonify(state)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     @app.route("/api/scan/start", methods=["POST"])
     def api_start_scan():
@@ -170,8 +174,16 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
 
         Returns immediately; scan runs in background thread.
         """
-        if app.config["SCAN_STATUS"]["running"]:
-            return jsonify({"error": "A scan is already running"}), 409
+        # Reject concurrent scans by checking DB state. (There is a small
+        # check-then-insert race across workers; acceptable at this scale.)
+        try:
+            guard_db = get_db()
+            guard_db.initialize_schema()
+            if guard_db.get_active_scan():
+                guard_db.disconnect()
+                return jsonify({"error": "A scan is already running"}), 409
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
         data = request.get_json(silent=True) or {}
         network_range = data.get("network_range")
@@ -192,21 +204,32 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
                 )
         dry_run = bool(saved.get("dry_run", False))
 
+        # Create the running scan row now so concurrent starts see it and
+        # the SSE stream can report progress from the database immediately.
+        try:
+            scan_id = guard_db.create_scan(
+                network_range or "auto-detect", scan_type
+            )
+            guard_db.disconnect()
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
         def run_scan():
-            app.config["SCAN_STATUS"]["running"] = True
-            app.config["SCAN_STATUS"]["progress"] = "Starting scan..."
+            from database.db_manager import DatabaseManager
+            db = DatabaseManager(**app.config["DB_CONFIG"])
+            db.connect()
+            db.initialize_schema()
             try:
                 from scanner.network_discovery import NetworkDiscovery
                 from scanner.port_scanner import PortScanner
                 from scanner.device_fingerprinting import DeviceFingerprinter
                 from scanner.vulnerability_checker import VulnerabilityChecker
                 from scanner.models import DeviceScanResult
-                from database.db_manager import DatabaseManager
 
                 scan_start = time.time()
 
                 nd = NetworkDiscovery()
-                app.config["SCAN_STATUS"]["progress"] = "Discovering hosts..."
+                db.update_scan_progress(scan_id, "Discovering hosts...")
 
                 if scan_type == "quick":
                     devices = nd.quick_scan(network_range)
@@ -222,8 +245,9 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
                     vc = VulnerabilityChecker(dry_run=dry_run)
 
                     for i, device in enumerate(devices, 1):
-                        app.config["SCAN_STATUS"]["progress"] = (
-                            f"Scanning device {i}/{total}: {device.ip_address}"
+                        db.update_scan_progress(
+                            scan_id,
+                            f"Scanning device {i}/{total}: {device.ip_address}",
                         )
                         try:
                             port_result = ps.scan_device(
@@ -244,25 +268,21 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
                     results = [DeviceScanResult(device=d) for d in devices]
 
                 duration = time.time() - scan_start
-                app.config["SCAN_STATUS"]["progress"] = "Saving results..."
+                db.update_scan_progress(scan_id, "Saving results...")
 
-                db = DatabaseManager(**app.config["DB_CONFIG"])
-                db.connect()
-                db.initialize_schema()
                 nr = network_range or nd.get_network_range()
-                scan_id = db.save_scan(nr, scan_type, results, duration)
-                db.disconnect()
-
-                app.config["SCAN_STATUS"]["last_scan_id"] = scan_id
-                app.config["SCAN_STATUS"]["progress"] = (
-                    f"Complete: {len(results)} devices scanned in {duration:.1f}s"
+                db.complete_scan(
+                    scan_id, results, duration, network_range=nr
                 )
 
             except Exception as e:
                 logger.error(f"Background scan failed: {e}")
-                app.config["SCAN_STATUS"]["progress"] = f"Error: {e}"
+                try:
+                    db.fail_scan(scan_id, str(e))
+                except Exception as fe:
+                    logger.error(f"Failed to record scan failure: {fe}")
             finally:
-                app.config["SCAN_STATUS"]["running"] = False
+                db.disconnect()
 
         thread = threading.Thread(target=run_scan, daemon=True)
         thread.start()
@@ -314,27 +334,37 @@ def create_app(db_config: Optional[dict] = None) -> Flask:
 
     @app.route("/api/scan/stream")
     def api_scan_stream():
-        """GET /api/scan/stream - SSE stream of scan progress."""
+        """GET /api/scan/stream - SSE stream of scan progress.
+
+        Polls the database for scan-state changes so progress is visible
+        regardless of which worker is running the scan.
+        """
         def _generate():
+            # One connection for the life of the stream; SELECTs run in
+            # autocommit so each poll sees the latest committed progress.
+            db = get_db()
             last_progress = None
             scan_started = False
-            while True:
-                status = dict(app.config["SCAN_STATUS"])
-                progress = status["progress"]
-                running = status["running"]
+            try:
+                while True:
+                    state = db.get_scan_state()
+                    progress = state["progress"]
+                    running = state["running"]
 
-                if running:
-                    scan_started = True
+                    if running:
+                        scan_started = True
 
-                if progress != last_progress:
-                    yield f"data: {json.dumps({'progress': progress, 'running': running})}\n\n"
-                    last_progress = progress
+                    if progress != last_progress:
+                        yield f"data: {json.dumps({'progress': progress, 'running': running})}\n\n"
+                        last_progress = progress
 
-                if scan_started and not running and last_progress is not None:
-                    yield "event: scan_complete\ndata: {\"done\": true}\n\n"
-                    return
+                    if scan_started and not running and last_progress is not None:
+                        yield "event: scan_complete\ndata: {\"done\": true}\n\n"
+                        return
 
-                time.sleep(0.5)
+                    time.sleep(0.5)
+            finally:
+                db.disconnect()
 
         return Response(
             stream_with_context(_generate()),
